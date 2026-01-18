@@ -1,0 +1,15 @@
+backend/.env
+backend/.venv/
+backend/__backend_zip_contents/
+backend/temp_asgiref_pkg/
+backend/tmp/
+backend/__pycache__/
+backend/**/*.pyc
+
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.production
+frontend/.env.*
+
+**/.DS_Store

@@ -1,0 +1,112 @@
+/* Global layout */
+#root {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: radial-gradient(circle at top left, #eef2ff 0%, #e0f2fe 45%, #f8fafc 100%);
+  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #1f2937;
+}
+
+.app-shell {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem 1.75rem;
+  gap: 1.25rem;
+  box-sizing: border-box;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-radius: 22px;
+  background: linear-gradient(145deg, rgba(30, 64, 175, 0.92), rgba(59, 130, 246, 0.85));
+  color: #ffffff;
+  box-shadow: 0 22px 48px -28px rgba(37, 99, 235, 0.85);
+}
+
+.app-header__title {
+  font-size: 1.45rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.app-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.95rem;
+  opacity: 0.95;
+}
+
+.app-header__user {
+  font-weight: 500;
+}
+
+.app-header__logout {
+  border: none;
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  padding: 0.5rem 1.1rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  font-weight: 600;
+}
+
+.app-header__logout:hover {
+  background: rgba(255, 255, 255, 0.28);
+  transform: translateY(-1px);
+  box-shadow: 0 14px 26px -20px rgba(255, 255, 255, 0.55);
+}
+
+.app-container {
+  flex: 1;
+  display: flex;
+  gap: 1.25rem;
+  min-height: 0;
+}
+
+.sidebar {
+  width: 30%;
+  min-width: 320px;
+  border-radius: 24px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.canvas-container {
+  flex: 1;
+  position: relative;
+  border-radius: 28px;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.92), rgba(224, 242, 254, 0.85));
+  box-shadow: 0 24px 55px -30px rgba(15, 23, 42, 0.65);
+  overflow: hidden;
+  display: flex;
+  min-height: 0;
+}
+
+.canvas-container > div {
+  flex: 1;
+}
+
+@media (max-width: 1200px) {
+  .app-container {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .sidebar {
+    width: 100%;
+    min-width: unset;
+  }
+}
+
