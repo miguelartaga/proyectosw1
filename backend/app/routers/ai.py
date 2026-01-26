@@ -88,8 +88,11 @@ def build_node(
     y: int,
     is_join: bool = False,
     join_of: Tuple[str, str] | None = None,
+    operations: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     data: Dict[str, Any] = {"label": label, "columns": columns}
+    if operations:
+        data["operations"] = operations
     if is_join:
         data["isJoin"] = True
         if join_of:
@@ -100,6 +103,22 @@ def build_node(
         "position": {"x": x, "y": y},
         "data": data,
     }
+
+
+def build_operations(node_id: str, operation_names: List[str]) -> List[Dict[str, Any]]:
+    operations: List[Dict[str, Any]] = []
+    used_slugs: set[str] = set()
+    for operation_name in operation_names:
+        base_slug = slugify(operation_name) or normalize_token(operation_name)
+        base_slug = base_slug.strip("-") or "operacion"
+        slug = base_slug
+        suffix = 2
+        while slug in used_slugs:
+            slug = f"{base_slug}-{suffix}"
+            suffix += 1
+        used_slugs.add(slug)
+        operations.append({"id": f"{node_id}-op-{slug}", "name": operation_name})
+    return operations
 
 
 def build_edge(
@@ -481,7 +500,7 @@ ADD_TABLE_PATTERN = re.compile(
 COLUMN_BEFORE_TABLE_PATTERN = re.compile(
     rf"(?:{ADD_COLUMN_VERBS})\s+(?:el|la|los|las|un|una|unos|unas)?\s*"
     rf"(?:nuevo|nueva|nuevos|nuevas)?\s*(?:atributo|atributos|columna|columnas|campo|campos)\s+"
-    rf"(?P<column>{COLUMN_TOKEN_PATTERN})\s+(?:a|en|para|al)\s+"
+    rf"(?P<column>{COLUMN_TOKEN_PATTERN})\s+(?:a|en|para|al|ala)\s+"
     rf"(?:la|el)?\s*tabla\s+(?P<table>{TABLE_TOKEN_PATTERN})"
 )
 ATTRIBUTE_STOP_PATTERN = re.compile(
@@ -489,7 +508,7 @@ ATTRIBUTE_STOP_PATTERN = re.compile(
     re.IGNORECASE,
 )
 TABLE_BEFORE_COLUMN_PATTERN = re.compile(
-    rf"(?:{ADD_COLUMN_VERBS})\s+(?:a|en|para|al)\s+(?:la|el)?\s*tabla\s+"
+    rf"(?:{ADD_COLUMN_VERBS})\s+(?:a|en|para|al|ala)\s+(?:la|el)?\s*tabla\s+"
     rf"(?P<table>{TABLE_TOKEN_PATTERN})\s+(?:con\s+)?"
     rf"(?:el|la|los|las|un|una|unos|unas)?\s*(?:nuevo|nueva|nuevos|nuevas)?\s*"
     rf"(?:atributo|atributos|columna|columnas|campo|campos)\s+(?P<column>{COLUMN_TOKEN_PATTERN})"
@@ -565,6 +584,67 @@ def clean_attribute_name(raw: str) -> str | None:
     if not cleaned:
         return None
     return cleaned
+
+
+OPERATIONS_PATTERN = re.compile(
+    rf"(?:operaciones?|operacion)\s+(?:de|para|en|del|de la|de las)?\s*"
+    rf"(?:tabla|clase)\s+(?P<table>{TABLE_TOKEN_PATTERN})"
+    rf"(?:\s+(?:tiene|tienen|son|con|constan|contiene|contienen))?\s*"
+    rf"(?P<ops>[^.;\n]+)",
+    re.IGNORECASE,
+)
+
+OPERATION_TAIL_STOPWORDS = {"son", "tiene", "tienen", "con", "y"}
+OPERATION_TAIL_PATTERN = re.compile(
+    rf"\b(?:{'|'.join(OPERATION_TAIL_STOPWORDS)})\b\s*$",
+    re.IGNORECASE,
+)
+
+
+def split_operation_phrase(operation_raw: str) -> List[str]:
+    parts = re.split(r"\s*,\s*|\b(?:y|e)\b", operation_raw)
+    operations: List[str] = []
+    for part in parts:
+        cleaned = part.strip()
+        if cleaned:
+            operations.append(cleaned)
+    return operations
+
+
+def clean_operation_name(raw: str) -> str | None:
+    cleaned = raw.strip(" .;,")
+    if not cleaned:
+        return None
+    cleaned = re.sub(
+        r"^(?:operaciones?|operacion)\s+",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = cleaned.strip()
+    return cleaned or None
+
+
+def extract_operation_actions(prompt: str) -> List[Tuple[str, List[str]]]:
+    if not prompt:
+        return []
+    actions: List[Tuple[str, List[str]]] = []
+    for match in OPERATIONS_PATTERN.finditer(prompt):
+        table_raw = (match.group("table") or "").strip()
+        table_clean = clean_table_phrase(table_raw)
+        if not table_clean:
+            continue
+        table_clean = OPERATION_TAIL_PATTERN.sub("", table_clean).strip()
+        operations_raw = match.group("ops") or ""
+        operation_list: List[str] = []
+        for candidate in split_operation_phrase(operations_raw):
+            operation_name = clean_operation_name(candidate)
+            if operation_name:
+                operation_list.append(operation_name)
+        if not operation_list:
+            continue
+        actions.append((table_clean, operation_list))
+    return actions
 
 
 def extract_add_table_actions(prompt: str) -> List[Tuple[str, List[str]]]:
@@ -864,6 +944,44 @@ def add_column_to_node(node: Dict[str, Any], column_name: str) -> str:
     return "added"
 
 
+def add_operation_to_node(node: Dict[str, Any], operation_name: str) -> str:
+    data = node.setdefault("data", {})
+    operations = data.setdefault("operations", [])
+    if not isinstance(operations, list):
+        operations = []
+        data["operations"] = operations
+
+    operation_key = normalize_token(operation_name)
+    if not operation_key:
+        return "invalid"
+
+    existing_keys = {
+        normalize_token(str(operation.get("name", ""))) for operation in operations if isinstance(operation, dict)
+    }
+    if operation_key in existing_keys:
+        return "duplicate"
+
+    base_slug = slugify(operation_name) or operation_key
+    base_slug = base_slug.strip("-")
+    if not base_slug:
+        base_slug = operation_key
+    candidate_id = f"{node.get('id', 'node')}-op-{base_slug}"
+    existing_ids = {str(operation.get("id")) for operation in operations if isinstance(operation, dict)}
+    new_id = candidate_id
+    suffix = 2
+    while new_id in existing_ids:
+        new_id = f"{candidate_id}-{suffix}"
+        suffix += 1
+
+    operations.append(
+        {
+            "id": new_id,
+            "name": operation_name,
+        }
+    )
+    return "added"
+
+
 def suggest_new_node_position(existing_nodes: List[Dict[str, Any]]) -> Dict[str, int]:
     spacing_x = 280
     spacing_y = 220
@@ -1022,8 +1140,9 @@ def upsert_relation_edge(
 def apply_incremental_updates(prompt: str, graph: GraphPayload) -> Dict[str, Any] | None:
     table_actions = extract_add_table_actions(prompt)
     column_actions = extract_add_column_actions(prompt)
+    operation_actions = extract_operation_actions(prompt)
     relation_actions, relation_intent = extract_relation_actions(prompt)
-    if not table_actions and not column_actions and not relation_actions:
+    if not table_actions and not column_actions and not operation_actions and not relation_actions:
         if relation_intent:
             graph_dict = graph.model_dump()
             return {
@@ -1067,6 +1186,17 @@ def apply_incremental_updates(prompt: str, graph: GraphPayload) -> Dict[str, Any
             mutated = True
         elif column_status == "duplicate":
             duplicates.append((table_raw, column_raw))
+
+    for table_raw, operation_list in operation_actions:
+        node = find_node_by_name(lookup, table_raw)
+        if not node:
+            node = create_node_with_defaults(table_raw, nodes)
+            register_node_in_lookup(lookup, node)
+            mutated = True
+        for operation in operation_list:
+            operation_status = add_operation_to_node(node, operation)
+            if operation_status == "added":
+                mutated = True
 
     for action in relation_actions:
         source_name = action["source"]
@@ -1390,6 +1520,7 @@ def university_diagram() -> Dict[str, Any]:
             ],
             x=800,
             y=60,
+            operations=build_operations("node-carreras", ["+crearCarrera()", "+actualizarDescripcion()"]),
         ),
         build_node(
             "node-cursos",
@@ -1427,6 +1558,7 @@ def university_diagram() -> Dict[str, Any]:
             ],
             x=500,
             y=320,
+            operations=build_operations("node-profesores", ["+asignarCurso()", "+registrarCalificacion()"]),
         ),
         build_node(
             "node-matriculas",
@@ -1442,6 +1574,7 @@ def university_diagram() -> Dict[str, Any]:
             y=320,
             is_join=True,
             join_of=("Estudiantes", "Cursos"),
+            operations=build_operations("node-matriculas", ["+inscribirEstudiante()", "+cancelarMatricula()"]),
         ),
         build_node(
             "node-aulas",
@@ -1498,6 +1631,7 @@ def veterinary_diagram() -> Dict[str, Any]:
             ],
             x=520,
             y=80,
+            operations=build_operations("node-clientes", ["+registrarCliente()", "+actualizarContacto()"]),
         ),
         build_node(
             "node-mascotas",
@@ -1511,6 +1645,7 @@ def veterinary_diagram() -> Dict[str, Any]:
             ],
             x=820,
             y=80,
+            operations=build_operations("node-mascotas", ["+registrarMascota()", "+actualizarHistoria()"]),
         ),
         build_node(
             "node-veterinarios",
@@ -1523,6 +1658,7 @@ def veterinary_diagram() -> Dict[str, Any]:
             ],
             x=220,
             y=320,
+            operations=build_operations("node-veterinarios", ["+asignarConsulta()", "+actualizarEspecialidad()"]),
         ),
         build_node(
             "node-citas",
@@ -1537,6 +1673,7 @@ def veterinary_diagram() -> Dict[str, Any]:
             ],
             x=520,
             y=320,
+            operations=build_operations("node-citas", ["+agendarConsulta()", "+cancelarConsulta()"]),
             is_join=True,
             join_of=("Clientes", "Mascotas"),
         ),
@@ -1595,6 +1732,10 @@ def supermarket_diagram() -> Dict[str, Any]:
             ],
             x=460,
             y=140,
+            operations=build_operations(
+                "node-productos",
+                ["+registrarProducto()", "+actualizarPrecio()"],
+            ),
         ),
         build_node(
             "node-categorias",
@@ -1630,6 +1771,7 @@ def supermarket_diagram() -> Dict[str, Any]:
             ],
             x=180,
             y=360,
+            operations=build_operations("node-clientes", ["+registrarCliente()", "+actualizarContacto()"]),
         ),
         build_node(
             "node-empleados",
@@ -1654,6 +1796,7 @@ def supermarket_diagram() -> Dict[str, Any]:
             ],
             x=460,
             y=360,
+            operations=build_operations("node-ventas", ["+procesarVenta()", "+emitirFactura()"]),
         ),
         build_node(
             "node-detalle-venta",
@@ -1681,6 +1824,7 @@ def supermarket_diagram() -> Dict[str, Any]:
             ],
             x=900,
             y=360,
+            operations=build_operations("node-inventario", ["+ajustarStock()", "+auditarInventario()"]),
         ),
     ]
 
@@ -1753,6 +1897,7 @@ def hospital_diagram() -> Dict[str, Any]:
             ],
             x=120,
             y=200,
+            operations=build_operations("node-pacientes", ["+registrarPaciente()", "+actualizarHistoria()"]),
         ),
         build_node(
             "node-doctores",
@@ -1765,6 +1910,7 @@ def hospital_diagram() -> Dict[str, Any]:
             ],
             x=720,
             y=200,
+            operations=build_operations("node-doctores", ["+asignarTurno()", "+actualizarEspecialidad()"]),
         ),
         build_node(
             "node-departamentos",
@@ -1790,6 +1936,7 @@ def hospital_diagram() -> Dict[str, Any]:
             ],
             x=420,
             y=200,
+            operations=build_operations("node-citas", ["+agendarCita()", "+cancelarCita()"]),
         ),
         build_node(
             "node-habitaciones",

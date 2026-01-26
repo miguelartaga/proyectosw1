@@ -7,7 +7,11 @@ from fastapi import HTTPException
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.routers.ai import GraphPayload, apply_incremental_updates
+from app.routers.ai import (
+    GraphPayload,
+    apply_incremental_updates,
+    supermarket_diagram,
+)
 
 
 def build_graph(with_edge: bool) -> GraphPayload:
@@ -99,6 +103,29 @@ class IncrementalMultiplicityTests(unittest.TestCase):
         edge_data = edges[0].get("data", {})
         self.assertEqual(edge_data.get("sourceMult"), "1")
         self.assertEqual(edge_data.get("targetMult"), "1")
+
+    def test_adds_operations_from_prompt(self) -> None:
+        graph = build_graph(with_edge=False)
+        prompt = "operaciones de la tabla pacientes son +consultar(), +actualizar()"
+
+        result = apply_incremental_updates(prompt, graph)
+        self.assertIsNotNone(result)
+
+        nodes = result["nodes"]
+        paciente_node = next(node for node in nodes if node["id"] == "node-pacientes")
+        operations = paciente_node.get("data", {}).get("operations", [])
+        self.assertEqual(len(operations), 2)
+        operation_names = [op.get("name") for op in operations]
+        self.assertIn("+consultar()", operation_names)
+        self.assertIn("+actualizar()", operation_names)
+
+    def test_supermarket_example_has_operations(self) -> None:
+        result = supermarket_diagram()
+        nodes = result["nodes"]
+        productos = next((node for node in nodes if node["id"] == "node-productos"), None)
+        self.assertIsNotNone(productos)
+        operations = productos.get("data", {}).get("operations", [])
+        self.assertGreater(len(operations), 0)
 
 
 if __name__ == "__main__":
